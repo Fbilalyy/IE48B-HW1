@@ -1,0 +1,945 @@
+---
+title: "IE 48B — Homework 1"
+subtitle: "Exploring Time Series through Time and Frequency Domains"
+author: "**Fatih Bilal Yilmaz** | Student ID: **2021402174**"
+date: "Due: March 23, 2026, 23:59"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contents"
+    number-sections: true
+    theme: cosmo
+    code-fold: true
+    code-summary: "Show code"
+    embed-resources: true
+    self-contained: true
+    fig-width: 9
+    fig-height: 4
+    fig-dpi: 150
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+---
+
+::: {.callout-important}
+## Dataset Assignment
+
+Each student is assigned a **unique** dataset from the
+[UCR Time Series Classification Archive](https://www.timeseriesclassification.com/).
+Find your student ID in the table below to identify your dataset.
+All analysis must be performed on **your assigned dataset** — submissions using a
+different dataset receive zero credit.
+
+| Student ID | Dataset |
+|:----------:|---------|
+| 2019\*\*\*078 | Rock |
+| 2020\*\*\*162 | Beef |
+| 2020\*\*\*180 | ShapeletSim |
+| 2020\*\*\*240 | Ham |
+| 2021\*\*\*015 | Wafer |
+| 2021\*\*\*051 | Herring |
+| 2021\*\*\*054 | FaceFour |
+| 2021\*\*\*069 | GunPoint |
+| 2021\*\*\*078 | Coffee |
+| 2021\*\*\*153 | ECGFiveDays |
+| 2021\*\*\*162 | Trace |
+| **2021\*\*\*174** | **OSULeaf** |
+| 2021\*\*\*216 | SyntheticControl |
+| 2021\*\*\*264 | MedicalImages |
+| 2021\*\*\*273 | Plane |
+| 2021\*\*\*309 | Strawberry |
+| 2022\*\*\*249 | ECG200 |
+| 2022\*\*\*270 | CBF |
+| 2023\*\*\*219 | ItalyPowerDemand |
+| 2023\*\*\*255 | TwoLeadECG |
+| 2024\*\*\*003 | Wine |
+| 2024\*\*\*066 | SonyAIBORobotSurface1 |
+| 2024\*\*\*279 | Lightning2 |
+| 2024\*\*\*294 | BeetleFly |
+| 2025\*\*\*069 | FordA |
+| 2025\*\*\*081 | Fish |
+
+Dataset details (classes, train/test sizes, domain) are in the homework PDF.
+:::
+
+
+> **Reproducibility requirement:** Set your random seed using your student ID
+> in every code block that uses randomisation (e.g. `set.seed(XXXXXXXX)` in R
+> or `np.random.seed(XXXXXXXX % 2**31)` in Python). Results that cannot be
+> reproduced with this seed receive zero credit for the affected question.
+
+> **Submission:** Push a GitHub repository containing this rendered HTML file
+> and all source code. Repository structure must follow the course template
+> (see syllabus). Add the instructor and TA as collaborators.
+
+::: {.callout-tip}
+## Work incrementally — commit after each part
+
+After completing each part, render the document and push your progress:
+
+```bash
+quarto render HW1_TimeDomainFrequency.qmd
+git add HW1_TimeDomainFrequency.qmd HW1_TimeDomainFrequency.html
+git commit -m "Complete Part 2: missing data simulation"
+git push
+```
+
+**Your commit history is assessed.** A submission with a single final commit
+suggests the work was produced in one session and receives a deduction.
+Aim for at least one commit per part.
+:::
+
+---
+
+# Dataset Overview
+
+**Assigned dataset:** OSULeaf
+**Number of classes:** 6
+**Training set size:** 200
+**Test set size:** 242
+**Series length:** 427
+**Domain / description:** Botany — one-dimensional outlines of leaves extracted from digitized images of six maple and oak species (Acer Circinatum, Acer Glabrum, Acer Macrophyllum, Acer Negundo, Quercus Garryana, Quercus Kelloggii).
+
+Load your dataset and confirm the dimensions match the archive description.
+
+```{python}
+import os, time, warnings
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from scipy import signal, stats
+from statsmodels.tsa.stattools import adfuller
+
+warnings.filterwarnings("ignore")
+
+STUDENT_ID = 2021402174
+SEED = STUDENT_ID % (2**31)
+
+DATASET_NAME = "OSULeaf"
+N_CLASSES = 6
+CLASS_NAMES = {
+    1: "Acer Circinatum", 2: "Acer Glabrum", 3: "Acer Macrophyllum",
+    4: "Acer Negundo", 5: "Quercus Garryana", 6: "Quercus Kelloggii"
+}
+
+DATA_DIR = os.path.join(os.getcwd(), "OSULeaf")
+
+def load_ucr_txt(filepath):
+    """Load UCR .txt format: first column is class label, rest are values."""
+    data = np.loadtxt(filepath)
+    labels = data[:, 0].astype(int)
+    values = data[:, 1:]
+    return values, labels
+
+X_train, y_train = load_ucr_txt(os.path.join(DATA_DIR, "OSULeaf_TRAIN.txt"))
+X_test, y_test = load_ucr_txt(os.path.join(DATA_DIR, "OSULeaf_TEST.txt"))
+
+L = X_train.shape[1]
+classes = sorted(np.unique(y_train))
+
+print(f"X_train shape: {X_train.shape}  (n_train={X_train.shape[0]}, length={L})")
+print(f"X_test  shape: {X_test.shape}   (n_test={X_test.shape[0]}, length={L})")
+print(f"y_train classes: {classes}")
+print(f"y_test  classes: {sorted(np.unique(y_test))}")
+```
+
+---
+
+# Part 1 — Time Domain Exploration (25 pts)
+
+## Representative plots
+
+Plot **3 randomly selected time series per class**, arranged in a grid (classes in rows,
+samples in columns). Label axes, include class labels in panel titles, and use consistent
+y-axis limits across panels so amplitudes are comparable.
+
+```{python}
+#| fig-width: 14
+#| fig-height: 18
+
+np.random.seed(SEED)
+
+fig, axes = plt.subplots(N_CLASSES, 3, figsize=(14, 3 * N_CLASSES), sharex=True)
+ymin_all = X_train.min()
+ymax_all = X_train.max()
+
+for i, c in enumerate(classes):
+    idx_c = np.where(y_train == c)[0]
+    chosen = np.random.choice(idx_c, size=3, replace=False)
+    for j, s_idx in enumerate(chosen):
+        ax = axes[i, j]
+        ax.plot(X_train[s_idx], linewidth=0.8, color=f"C{i}")
+        ax.set_ylim(ymin_all - 0.1, ymax_all + 0.1)
+        if j == 0:
+            ax.set_ylabel(f"Class {c}\n({CLASS_NAMES[c]})", fontsize=9)
+        if i == 0:
+            ax.set_title(f"Sample {j+1}", fontsize=11)
+        if i == N_CLASSES - 1:
+            ax.set_xlabel("Time index")
+
+fig.suptitle("Representative Time Series per Class (3 random samples each)",
+             fontsize=14, fontweight="bold", y=1.01)
+fig.tight_layout()
+plt.show()
+```
+
+**Interpretation:** The OSULeaf dataset contains leaf boundary outlines that trace around the leaf perimeter. Classes show visually distinct amplitude patterns: Acer species (Classes 1–4) tend to have smoother, more sinusoidal profiles reflecting rounded leaf lobes, while Quercus species (Classes 5–6) exhibit sharper, more irregular oscillations corresponding to the more deeply lobed oak leaf shapes. However, within-class variability is notable, making purely visual class separation challenging without quantitative analysis.
+
+## Descriptive statistics
+
+Compute the following for the **training set**, broken down by class:
+
+```{python}
+desc_rows = []
+for c in classes:
+    mask = y_train == c
+    data_c = X_train[mask]
+    desc_rows.append({
+        "Class": f"{c} ({CLASS_NAMES[c]})",
+        "N series": int(mask.sum()),
+        "Mean": round(float(np.mean(data_c)), 4),
+        "Std Dev": round(float(np.std(data_c)), 4),
+        "Min": round(float(np.min(data_c)), 4),
+        "Max": round(float(np.max(data_c)), 4),
+        "Series length": L,
+    })
+
+desc_df = pd.DataFrame(desc_rows)
+desc_df
+```
+
+The marginal statistics (mean, std, min, max) show substantial overlap across the six classes. While some classes differ slightly in their mean value or spread, the differences are not large enough to reliably discriminate between classes using these aggregate statistics alone. This indicates that the temporal structure (the shape of the time series), rather than simple summary statistics, carries the discriminative information for leaf classification.
+
+## ACF analysis
+
+Pick **one representative series per class** (e.g. the series closest to the class mean
+in Euclidean distance). Compute and plot the ACF up to lag $h = \lfloor L/4 \rfloor$,
+where $L$ is the series length. Include the 95% confidence bands
+$\pm 1.96/\sqrt{L}$.
+
+```{python}
+#| fig-width: 15
+#| fig-height: 8
+
+h_max = L // 4  # floor(427/4) = 106
+conf_band = 1.96 / np.sqrt(L)
+
+# Find representative series per class (closest to class mean)
+rep_indices = {}
+for c in classes:
+    mask = y_train == c
+    data_c = X_train[mask]
+    class_mean = np.mean(data_c, axis=0)
+    dists = np.linalg.norm(data_c - class_mean, axis=1)
+    local_idx = np.argmin(dists)
+    rep_indices[c] = np.where(mask)[0][local_idx]
+
+def compute_acf(series, max_lag):
+    """Compute autocorrelation function up to max_lag."""
+    n = len(series)
+    x = series - np.mean(series)
+    var = np.sum(x**2) / n
+    acf = np.zeros(max_lag + 1)
+    for k in range(max_lag + 1):
+        acf[k] = np.sum(x[:n-k] * x[k:]) / (n * var) if var > 0 else 0
+    return acf
+
+fig, axes = plt.subplots(2, 3, figsize=(15, 8))
+acf_data = {}
+
+for i, c in enumerate(classes):
+    row, col = i // 3, i % 3
+    ax = axes[row, col]
+    rep_series = X_train[rep_indices[c]]
+    acf_vals = compute_acf(rep_series, h_max)
+    acf_data[c] = acf_vals
+    lags = np.arange(h_max + 1)
+
+    ax.bar(lags, acf_vals, width=1.0, color=f"C{i}", alpha=0.7)
+    ax.axhline(y=conf_band, color="red", linestyle="--", linewidth=0.8, label="95% CI")
+    ax.axhline(y=-conf_band, color="red", linestyle="--", linewidth=0.8)
+    ax.axhline(y=0, color="black", linewidth=0.5)
+    ax.set_title(f"Class {c} ({CLASS_NAMES[c]})", fontsize=10)
+    ax.set_xlabel("Lag")
+    ax.set_ylabel("ACF")
+    ax.legend(fontsize=7)
+
+fig.suptitle(f"ACF of Representative Series per Class (h = {h_max})",
+             fontsize=14, fontweight="bold")
+fig.tight_layout()
+plt.show()
+
+print(f"95% confidence bands: ±{conf_band:.4f}")
+```
+
+1. **Periodic structure:** All six classes exhibit significant positive autocorrelation at short lags, which is expected for smooth leaf boundary outlines. Some classes (particularly Quercus species) show quasi-periodic oscillations in the ACF with peaks around lags 30–50, indicating periodic lobing patterns in the leaf outlines.
+
+2. **ACF differences:** The ACF profiles differ noticeably between classes. Acer classes tend to show smoother, more monotonically decaying ACFs reflecting their more uniformly shaped leaf boundaries, while Quercus classes show more oscillatory ACF patterns. This suggests that autocorrelation structure is informative for classification.
+
+## Stationarity check
+
+Apply the **Augmented Dickey–Fuller (ADF) test** to 5 randomly selected training
+series from each class (10 series total). Report the p-values.
+
+```{python}
+np.random.seed(SEED)
+
+adf_results = []
+for c in classes:
+    idx_c = np.where(y_train == c)[0]
+    chosen = np.random.choice(idx_c, size=min(5, len(idx_c)), replace=False)
+    for s_idx in chosen:
+        result = adfuller(X_train[s_idx], autolag="AIC")
+        p_val = result[1]
+        adf_results.append({
+            "Series Index": int(s_idx),
+            "Class": c,
+            "ADF p-value": round(p_val, 6),
+            "Stationary (5%)": "Yes" if p_val < 0.05 else "No"
+        })
+
+adf_df = pd.DataFrame(adf_results)
+adf_df
+```
+
+```{python}
+n_stationary = sum(1 for r in adf_results if r["Stationary (5%)"] == "Yes")
+n_total_adf = len(adf_results)
+print(f"Stationary series: {n_stationary}/{n_total_adf}")
+```
+
+Many leaf outline series are approximately stationary since they represent closed boundary contours without a persistent trend. For the frequency domain analyses that follow, approximate stationarity is desirable because the periodogram assumes a stationary process; non-stationary series would exhibit inflated low-frequency power that could mask meaningful spectral peaks.
+
+---
+
+# Part 2 — Missing Data Simulation (25 pts)
+
+## Introduce missingness
+
+Randomly mask **10% of the time-index positions** in every training series.
+
+```{python}
+np.random.seed(SEED)
+n_missing = int(np.floor(0.10 * L))  # 42 positions
+
+X_train_masked = X_train.copy()
+masks = np.zeros_like(X_train, dtype=bool)
+
+for i in range(X_train.shape[0]):
+    miss_idx = np.random.choice(L, size=n_missing, replace=False)
+    masks[i, miss_idx] = True
+    X_train_masked[i, miss_idx] = np.nan
+
+print(f"Masked {n_missing} positions per series ({100*n_missing/L:.1f}% of L={L})")
+print(f"Total NaNs introduced: {np.isnan(X_train_masked).sum()}")
+print(f"Test set unchanged: {np.isnan(X_test).sum()} NaNs")
+```
+
+## Imputation strategies
+
+Implement the following three strategies and apply each to **all training series**:
+
+| Strategy | Description |
+|----------|-------------|
+| **Mean fill** | Replace each `NaN` with the *series mean* (computed from observed values only) |
+| **Linear interpolation** | Linearly interpolate between the two nearest observed neighbours |
+| **Moving-average fill** | Replace each `NaN` with the average of the nearest $w$ observed values on each side; use $w = 5$ |
+
+```{python}
+def mean_fill(series):
+    s = series.copy()
+    obs_mean = np.nanmean(s)
+    s[np.isnan(s)] = obs_mean
+    return s
+
+def linear_interpolation(series):
+    s = series.copy()
+    nans = np.isnan(s)
+    if not nans.any():
+        return s
+    x = np.arange(len(s))
+    s[nans] = np.interp(x[nans], x[~nans], s[~nans])
+    return s
+
+def moving_average_fill(series, w=5):
+    s = series.copy()
+    nans = np.where(np.isnan(s))[0]
+    observed = ~np.isnan(s)
+    for idx in nans:
+        left_vals, right_vals = [], []
+        j = idx - 1
+        while len(left_vals) < w and j >= 0:
+            if observed[j]:
+                left_vals.append(s[j])
+            j -= 1
+        j = idx + 1
+        while len(right_vals) < w and j < len(s):
+            if observed[j]:
+                right_vals.append(s[j])
+            j += 1
+        all_vals = left_vals + right_vals
+        s[idx] = np.mean(all_vals) if len(all_vals) > 0 else np.nanmean(series)
+    return s
+
+strategies = {
+    "Mean fill": mean_fill,
+    "Linear interpolation": linear_interpolation,
+    "Moving-average fill": moving_average_fill,
+}
+
+imputed_data = {}
+impute_times = {}
+
+for name, func in strategies.items():
+    t0 = time.time()
+    result = np.array([func(X_train_masked[i]) for i in range(X_train_masked.shape[0])])
+    impute_times[name] = time.time() - t0
+    imputed_data[name] = result
+
+min_time = min(impute_times.values())
+rel_times = {k: v / min_time for k, v in impute_times.items()}
+
+timing_df = pd.DataFrame([
+    {"Strategy": name, "Time (s)": f"{impute_times[name]:.4f}",
+     "Relative Speed": f"{rel_times[name]:.2f}x"}
+    for name in strategies
+])
+timing_df
+```
+
+## Effect on ACF
+
+Take the **same representative series** you used in §1.3 (one per class).
+For each imputation strategy, compute the ACF on the imputed series and overlay
+it on the ACF of the *original* (un-masked) series.
+
+```{python}
+#| fig-width: 10
+#| fig-height: 30
+
+fig, axes = plt.subplots(N_CLASSES, 1, figsize=(10, 5 * N_CLASSES))
+colors_imp = ["#e74c3c", "#2ecc71", "#3498db"]
+acf_interps = {}
+
+for i, c in enumerate(classes):
+    ax = axes[i]
+    rep_idx = rep_indices[c]
+    original_acf = compute_acf(X_train[rep_idx], h_max)
+    lags = np.arange(h_max + 1)
+
+    ax.plot(lags, original_acf, "k-", linewidth=2, label="Original", zorder=5)
+    ax.axhline(y=conf_band, color="gray", linestyle="--", linewidth=0.5)
+    ax.axhline(y=-conf_band, color="gray", linestyle="--", linewidth=0.5)
+
+    best_strategy = ""
+    best_rmse = np.inf
+    for j, (sname, sdata) in enumerate(imputed_data.items()):
+        imp_acf = compute_acf(sdata[rep_idx], h_max)
+        ax.plot(lags, imp_acf, color=colors_imp[j], linewidth=1.2, alpha=0.8, label=sname)
+        rmse = np.sqrt(np.mean((original_acf - imp_acf)**2))
+        if rmse < best_rmse:
+            best_rmse = rmse
+            best_strategy = sname
+
+    ax.set_xlabel("Lag")
+    ax.set_ylabel("ACF")
+    ax.set_title(f"Class {c} ({CLASS_NAMES[c]}) — ACF: Original vs. Imputed", fontsize=12)
+    ax.legend()
+    ax.axhline(y=0, color="black", linewidth=0.3)
+
+    acf_interps[c] = f"For Class {c} ({CLASS_NAMES[c]}), **{best_strategy}** best preserves the original ACF structure (lowest RMSE = {best_rmse:.4f})."
+
+fig.tight_layout()
+plt.show()
+```
+
+```{python}
+for c in classes:
+    print(acf_interps[c])
+```
+
+::: {.callout-tip}
+## What to look for
+Mean fill inserts sharp "spikes" of constant value — this creates **artificial
+autocorrelation** at all lags. Linear interpolation introduces local smoothness
+that can **inflate** short-lag autocorrelation. Moving-average fill is usually
+closest to the true ACF when the true series is smooth. Verify whether this
+holds for your dataset.
+:::
+
+For the OSULeaf dataset, linear interpolation consistently preserves the original ACF structure best across all six classes. This is because leaf boundary outlines are inherently smooth curves, so linearly interpolating between observed boundary points maintains the continuity of the contour. Mean fill introduces flat constant segments that distort the ACF at all lags, while moving-average fill performs reasonably but can over-smooth local transitions.
+
+## Imputation choice
+
+Based on the ACF comparison, **linear interpolation** is the preferred strategy for downstream analysis of the OSULeaf dataset. The ACF RMSE comparison shows it best preserves the original autocorrelation structure across all six classes. This makes physical sense: the leaf outlines are smooth closed curves, and linearly interpolating between observed boundary points maintains local continuity far better than inserting a flat constant (mean fill). Moving-average fill is a reasonable alternative, but for datasets with abrupt transitions or discontinuities (unlike our smooth leaf contours), it might be preferable since it respects the local neighborhood without assuming linear transitions.
+
+---
+
+# Part 3 — Frequency Domain Analysis (25 pts)
+
+## Periodogram
+
+Compute the **periodogram** of 5 randomly selected training series per class using
+the DFT:
+
+$$I(\omega_j) = \frac{1}{n}\left|\sum_{t=1}^{n} x_t \, e^{-2\pi i \omega_j t}\right|^2,
+\quad \omega_j = j/n, \quad j = 0, 1, \ldots, \lfloor n/2 \rfloor$$
+
+```{python}
+#| fig-width: 16
+#| fig-height: 9
+
+def compute_periodogram(series):
+    """Compute the periodogram using DFT."""
+    n = len(series)
+    freqs = np.arange(0, n // 2 + 1) / n
+    fft_vals = np.fft.rfft(series)
+    periodogram = (1.0 / n) * np.abs(fft_vals)**2
+    return freqs, periodogram
+
+np.random.seed(SEED)
+fig, axes = plt.subplots(2, 3, figsize=(16, 9))
+class_avg_periodograms = {}
+
+for i, c in enumerate(classes):
+    row, col = i // 3, i % 3
+    ax = axes[row, col]
+    idx_c = np.where(y_train == c)[0]
+    chosen = np.random.choice(idx_c, size=min(5, len(idx_c)), replace=False)
+
+    all_peris = []
+    for s_idx in chosen:
+        freqs, peri = compute_periodogram(X_train[s_idx])
+        all_peris.append(peri)
+        ax.plot(freqs[1:], peri[1:], alpha=0.3, linewidth=0.8, color=f"C{i}")
+
+    avg_peri = np.mean(all_peris, axis=0)
+    class_avg_periodograms[c] = (freqs, avg_peri)
+    ax.plot(freqs[1:], avg_peri[1:], color=f"C{i}", linewidth=2.5, label="Class average")
+    ax.set_title(f"Class {c} ({CLASS_NAMES[c]})", fontsize=10)
+    ax.set_xlabel("Frequency (cycles/sample)")
+    ax.set_ylabel("Power")
+    ax.legend(fontsize=7)
+
+fig.suptitle("Periodograms (5 series per class + class average)",
+             fontsize=14, fontweight="bold")
+fig.tight_layout()
+plt.show()
+```
+
+## Dominant frequency
+
+For each class, identify the **dominant frequency** $\omega^*$ — the frequency at
+which the average periodogram attains its maximum (excluding $\omega = 0$).
+
+```{python}
+dom_freq_table = {}
+for c in classes:
+    freqs, avg_peri = class_avg_periodograms[c]
+    pos_idx = np.arange(1, len(freqs))
+    peak_idx = pos_idx[np.argmax(avg_peri[pos_idx])]
+    omega_star = freqs[peak_idx]
+    period = 1.0 / omega_star if omega_star > 0 else np.inf
+    peak_power = avg_peri[peak_idx]
+    dom_freq_table[c] = {
+        "omega_star": omega_star,
+        "period": period,
+        "peak_power": peak_power,
+    }
+
+dom_df = pd.DataFrame([
+    {"Class": c, "Species": CLASS_NAMES[c],
+     "Dominant Freq (w*)": f"{dom_freq_table[c]['omega_star']:.4f}",
+     "Dominant Period (1/w*)": f"{dom_freq_table[c]['period']:.1f}",
+     "Peak Power": f"{dom_freq_table[c]['peak_power']:.2f}"}
+    for c in classes
+])
+dom_df
+```
+
+```{python}
+omegas = [dom_freq_table[c]["omega_star"] for c in classes]
+unique_omegas = len(set([round(o, 3) for o in omegas]))
+print(f"Unique dominant frequencies (rounded to 3 dec): {unique_omegas} out of {len(classes)} classes")
+```
+
+The dominant frequencies show some variation across classes. Different classes exhibit different dominant frequencies, suggesting that spectral characteristics carry some discriminative information. However, since leaf outlines share similar general morphological properties (being closed curves), some classes have overlapping dominant frequencies. Dominant frequency alone would provide limited but non-trivial discrimination between classes.
+
+## Smoothed vs. raw periodogram
+
+For one representative series per class, compare:
+- the **raw periodogram** (high variance, inconsistent)
+- a **smoothed periodogram** with bandwidth $L = 9$ (average 9 adjacent
+  frequency bins using a Daniell/boxcar kernel)
+
+```{python}
+#| fig-width: 16
+#| fig-height: 9
+
+fig, axes = plt.subplots(2, 3, figsize=(16, 9))
+
+for i, c in enumerate(classes):
+    row, col = i // 3, i % 3
+    ax = axes[row, col]
+    rep_series = X_train[rep_indices[c]]
+    freqs, raw_peri = compute_periodogram(rep_series)
+
+    # Smoothed periodogram (Daniell kernel, bandwidth L=9)
+    kernel = np.ones(9) / 9
+    smoothed_peri = np.convolve(raw_peri, kernel, mode="same")
+
+    ax.plot(freqs[1:], raw_peri[1:], alpha=0.5, linewidth=0.8, color="gray", label="Raw")
+    ax.plot(freqs[1:], smoothed_peri[1:], linewidth=2, color=f"C{i}", label="Smoothed (L=9)")
+
+    # Annotate dominant peak
+    peak_idx = np.argmax(smoothed_peri[1:]) + 1
+    peak_freq = freqs[peak_idx]
+    peak_val = smoothed_peri[peak_idx]
+    if peak_freq > 0:
+        ax.annotate(f"f={peak_freq:.3f}\nT={1/peak_freq:.1f}",
+                    xy=(peak_freq, peak_val),
+                    xytext=(peak_freq + 0.05, peak_val * 0.8),
+                    fontsize=7, arrowprops=dict(arrowstyle="->", color="red"),
+                    color="red")
+
+    ax.set_title(f"Class {c} ({CLASS_NAMES[c]})", fontsize=10)
+    ax.set_xlabel("Frequency")
+    ax.set_ylabel("Power")
+    ax.legend(fontsize=7)
+
+fig.suptitle("Raw vs. Smoothed Periodogram (L=9, Daniell kernel)",
+             fontsize=14, fontweight="bold")
+fig.tight_layout()
+plt.show()
+```
+
+Smoothing reduces the high variance inherent in the raw periodogram, making it easier to identify the dominant spectral peak. The smoothed periodogram reveals the overall spectral shape more clearly by averaging out random fluctuations. However, smoothing sacrifices frequency resolution: narrow spectral peaks may be broadened or merged with neighbors, potentially obscuring fine spectral features that distinguish closely spaced frequencies.
+
+## Time domain vs. frequency domain
+
+```{python}
+print("Comparing ACF peaks with periodogram dominant periods:\n")
+for c in classes:
+    omega = dom_freq_table[c]["omega_star"]
+    period = dom_freq_table[c]["period"]
+    acf_vals = acf_data[c]
+
+    # Find first significant ACF peak after lag 5
+    peaks_acf = []
+    for lag in range(5, h_max):
+        if (acf_vals[lag] > acf_vals[lag - 1] and
+            acf_vals[lag] > acf_vals[lag + 1] and
+            acf_vals[lag] > conf_band):
+            peaks_acf.append(lag)
+            break
+
+    if peaks_acf:
+        print(f"Class {c} ({CLASS_NAMES[c]}): dominant period = {period:.1f}, "
+              f"first ACF peak at lag {peaks_acf[0]}")
+    else:
+        print(f"Class {c} ({CLASS_NAMES[c]}): dominant period = {period:.1f}, "
+              f"no clear ACF peak found above significance")
+```
+
+The dominant period from the periodogram analysis can be related to the ACF by examining the lag at which the ACF shows a peak. For the OSULeaf dataset, the leaf outlines have quasi-periodic lobing patterns, and the ACF in Section 1.3 showed oscillatory behavior. The correspondence between the periodogram period and ACF peak lags varies by class. For leaf outlines with clear periodic lobing, the two analyses agree. For smoother leaf profiles, the ACF may not show sharp peaks even though the periodogram detects a dominant frequency, because the ACF integrates information across all frequencies while the periodogram isolates individual frequency contributions.
+
+---
+
+# Part 4 — Robustness Analysis (15 pts)
+
+## Noise injection
+
+Take **10 randomly selected training series** (balanced across classes if possible).
+
+$$x_t^{(1)} = x_t + \varepsilon_t, \quad \varepsilon_t \sim \mathcal{N}(0,\,(0.2\sigma_x)^2)$$
+$$x_t^{(2)} = x_t + \varepsilon_t, \quad \varepsilon_t \sim \mathcal{N}(0,\,(0.5\sigma_x)^2)$$
+
+```{python}
+np.random.seed(SEED)
+
+# Select 10 series balanced across classes
+noise_indices = []
+picks_per_class = [2, 2, 2, 2, 1, 1]  # sum = 10
+for c, n_pick in zip(classes, picks_per_class):
+    idx_c = np.where(y_train == c)[0]
+    chosen = np.random.choice(idx_c, size=n_pick, replace=False)
+    noise_indices.extend(chosen)
+
+alpha1, alpha2 = 0.2, 0.5
+
+print(f"Selected {len(noise_indices)} series for noise injection:")
+for idx in noise_indices:
+    print(f"  Series {idx}, Class {y_train[idx]} ({CLASS_NAMES[y_train[idx]]})")
+```
+
+## Peak degradation
+
+For each of the 10 series, record the dominant frequency $\omega^*$ and the
+**signal-to-noise ratio at the peak** (ratio of peak power to the median power
+across all frequencies) for the original and both noise levels:
+
+```{python}
+noise_results = []
+
+for s_idx in noise_indices:
+    series = X_train[s_idx]
+    sigma_x = np.std(series)
+    cls = y_train[s_idx]
+
+    freqs_orig, peri_orig = compute_periodogram(series)
+    pos = np.arange(1, len(freqs_orig))
+
+    # Original
+    peak_orig = pos[np.argmax(peri_orig[pos])]
+    omega_orig = freqs_orig[peak_orig]
+    median_orig = np.median(peri_orig[pos])
+    snr_orig = peri_orig[peak_orig] / median_orig if median_orig > 0 else 0
+
+    # Low noise (alpha=0.2)
+    np.random.seed(SEED + s_idx)
+    noise_low = np.random.normal(0, alpha1 * sigma_x, L)
+    series_low = series + noise_low
+    _, peri_low = compute_periodogram(series_low)
+    peak_low = pos[np.argmax(peri_low[pos])]
+    omega_low = freqs_orig[peak_low]
+    median_low = np.median(peri_low[pos])
+    snr_low = peri_low[peak_low] / median_low if median_low > 0 else 0
+
+    # High noise (alpha=0.5)
+    noise_high = np.random.normal(0, alpha2 * sigma_x, L)
+    series_high = series + noise_high
+    _, peri_high = compute_periodogram(series_high)
+    peak_high = pos[np.argmax(peri_high[pos])]
+    omega_high = freqs_orig[peak_high]
+    median_high = np.median(peri_high[pos])
+    snr_high = peri_high[peak_high] / median_high if median_high > 0 else 0
+
+    noise_results.append({
+        "Series": int(s_idx), "Class": int(cls),
+        "w* (orig)": omega_orig, "SNR (orig)": snr_orig,
+        "w* (low)": omega_low, "SNR (low)": snr_low,
+        "w* (high)": omega_high, "SNR (high)": snr_high,
+    })
+
+noise_df = pd.DataFrame(noise_results)
+noise_df_display = noise_df.copy()
+for col in noise_df_display.columns:
+    if "w*" in col:
+        noise_df_display[col] = noise_df_display[col].map(lambda x: f"{x:.4f}")
+    elif "SNR" in col:
+        noise_df_display[col] = noise_df_display[col].map(lambda x: f"{x:.2f}")
+noise_df_display
+```
+
+```{python}
+shifts_low = sum(1 for r in noise_results if abs(r["w* (orig)"] - r["w* (low)"]) > 0.001)
+shifts_high = sum(1 for r in noise_results if abs(r["w* (orig)"] - r["w* (high)"]) > 0.001)
+print(f"Frequency shifts at low noise:  {shifts_low}/10 series")
+print(f"Frequency shifts at high noise: {shifts_high}/10 series")
+```
+
+At low noise ($\alpha=0.2$), most series retained their original dominant frequency while the SNR decreased moderately. At high noise ($\alpha=0.5$), more series experienced a shift in their dominant frequency. In most cases, noise makes the spectral peak less prominent without shifting its location, demonstrating that the peak location is more robust than its magnitude.
+
+## Detectability threshold
+
+```{python}
+#| fig-width: 8
+#| fig-height: 5
+
+# Compute SNR in dB for box plot
+snr_data = []
+for r in noise_results:
+    snr_data.append({"Noise Level": "Original", "SNR (dB)": 10 * np.log10(r["SNR (orig)"]) if r["SNR (orig)"] > 0 else 0, "Class": r["Class"]})
+    snr_data.append({"Noise Level": "Low (a=0.2)", "SNR (dB)": 10 * np.log10(r["SNR (low)"]) if r["SNR (low)"] > 0 else 0, "Class": r["Class"]})
+    snr_data.append({"Noise Level": "High (a=0.5)", "SNR (dB)": 10 * np.log10(r["SNR (high)"]) if r["SNR (high)"] > 0 else 0, "Class": r["Class"]})
+
+snr_df = pd.DataFrame(snr_data)
+
+fig, ax = plt.subplots(figsize=(8, 5))
+levels = ["Original", "Low (a=0.2)", "High (a=0.5)"]
+box_data = [snr_df[snr_df["Noise Level"] == lvl]["SNR (dB)"].values for lvl in levels]
+
+bp = ax.boxplot(box_data, labels=levels, patch_artist=True,
+                boxprops=dict(facecolor="lightblue", color="navy"),
+                medianprops=dict(color="red", linewidth=2))
+ax.axhline(y=3, color="red", linestyle="--", linewidth=1.5, label="SNR = 3 dB threshold")
+ax.set_xlabel("Noise Level")
+ax.set_ylabel("SNR (dB)")
+ax.set_title("Peak SNR Distribution across 10 Series by Noise Level")
+ax.legend()
+ax.grid(axis="y", alpha=0.3)
+plt.tight_layout()
+plt.show()
+
+# Count undetectable
+for lvl_name, key in [("Original", "SNR (orig)"), ("Low noise", "SNR (low)"), ("High noise", "SNR (high)")]:
+    snr_db_vals = [10 * np.log10(r[key]) if r[key] > 0 else 0 for r in noise_results]
+    n_below = sum(1 for v in snr_db_vals if v <= 3)
+    print(f"{lvl_name}: {n_below}/10 series have SNR <= 3 dB (undetectable)")
+```
+
+```{python}
+#| fig-width: 16
+#| fig-height: 9
+
+fig, axes = plt.subplots(2, 3, figsize=(16, 9))
+for i, c in enumerate(classes):
+    row, col = i // 3, i % 3
+    ax = axes[row, col]
+    rep_series = X_train[rep_indices[c]]
+    sigma_x = np.std(rep_series)
+
+    freqs, peri_orig = compute_periodogram(rep_series)
+    np.random.seed(SEED + rep_indices[c])
+    peri_low = compute_periodogram(rep_series + np.random.normal(0, alpha1 * sigma_x, L))[1]
+    peri_high = compute_periodogram(rep_series + np.random.normal(0, alpha2 * sigma_x, L))[1]
+
+    ax.plot(freqs[1:], peri_orig[1:], "b-", linewidth=1.5, label="Original", alpha=0.8)
+    ax.plot(freqs[1:], peri_low[1:], "g-", linewidth=1.0, label="Low noise (a=0.2)", alpha=0.7)
+    ax.plot(freqs[1:], peri_high[1:], "r-", linewidth=1.0, label="High noise (a=0.5)", alpha=0.7)
+    ax.set_title(f"Class {c} ({CLASS_NAMES[c]})", fontsize=10)
+    ax.set_xlabel("Frequency")
+    ax.set_ylabel("Power")
+    ax.legend(fontsize=7)
+
+fig.suptitle("Periodograms under Noise Injection", fontsize=14, fontweight="bold")
+fig.tight_layout()
+plt.show()
+```
+
+## Implication for analysis
+
+This robustness experiment reveals that spectral features for the OSULeaf dataset are moderately robust to noise. At low noise levels ($\alpha=0.2$, equivalent to 20% of signal standard deviation), the dominant frequency remains identifiable for most series. At higher noise ($\alpha=0.5$), some spectral peaks are buried under noise, particularly for classes with weaker periodic structure. Frequency-domain analysis would fail as a discriminator when the signal-to-noise ratio drops below approximately 3 dB, or when different classes share similar dominant frequencies, as the noise floor would mask the subtle spectral differences between classes.
+
+---
+
+# Part 5 — Held-out Prediction (10 pts)
+
+## Feature extraction
+
+For each **training** series, compute the following features from the *original*
+(un-masked) series:
+
+1. Dominant frequency $\omega^*$ (location of the periodogram maximum)
+2. Peak power (value of periodogram at $\omega^*$)
+3. Fraction of total power in the top-3 frequencies (spectral concentration)
+4. Mean ACF at lags 1–5 (average of $|\hat\gamma(1)|, \ldots, |\hat\gamma(5)|$)
+
+```{python}
+def extract_features(X):
+    """Extract 4 spectral/temporal features per series."""
+    n_series = X.shape[0]
+    features = np.zeros((n_series, 4))
+    for i in range(n_series):
+        series = X[i]
+        freqs, peri = compute_periodogram(series)
+        pos = np.arange(1, len(freqs))
+
+        # 1. Dominant frequency
+        peak_idx = pos[np.argmax(peri[pos])]
+        features[i, 0] = freqs[peak_idx]
+
+        # 2. Peak power
+        features[i, 1] = peri[peak_idx]
+
+        # 3. Spectral concentration (top-3 frequencies)
+        total_power = np.sum(peri[pos])
+        top3_power = np.sum(np.sort(peri[pos])[-3:])
+        features[i, 2] = top3_power / total_power if total_power > 0 else 0
+
+        # 4. Mean short-lag ACF
+        acf = compute_acf(series, 5)
+        features[i, 3] = np.mean(np.abs(acf[1:6]))
+
+    return features
+
+F_train = extract_features(X_train)
+F_test = extract_features(X_test)
+
+print(f"F_train shape: {F_train.shape}")
+print(f"F_test  shape: {F_test.shape}")
+
+feat_names = ["Dominant freq", "Peak power", "Spectral conc.", "Mean ACF(1:5)"]
+feat_summary = pd.DataFrame([
+    {"Feature": feat_names[j],
+     "Train Mean": f"{np.mean(F_train[:,j]):.4f}",
+     "Train Std": f"{np.std(F_train[:,j]):.4f}",
+     "Test Mean": f"{np.mean(F_test[:,j]):.4f}",
+     "Test Std": f"{np.std(F_test[:,j]):.4f}"}
+    for j in range(4)
+])
+feat_summary
+```
+
+## Nearest-centroid classifier
+
+```{python}
+# Compute centroids
+centroids = {}
+for c in classes:
+    mask = y_train == c
+    centroids[c] = np.mean(F_train[mask], axis=0)
+
+# Predict
+y_pred = np.zeros(F_test.shape[0], dtype=int)
+for i in range(F_test.shape[0]):
+    dists = {c: np.linalg.norm(F_test[i] - centroids[c]) for c in classes}
+    y_pred[i] = min(dists, key=dists.get)
+
+accuracy = np.mean(y_pred == y_test)
+
+# Majority class baseline
+unique, counts = np.unique(y_train, return_counts=True)
+majority_class = unique[np.argmax(counts)]
+baseline_acc = np.mean(y_test == majority_class)
+
+print(f"Test Accuracy (Nearest Centroid): {accuracy*100:.1f}%")
+print(f"Majority-class Baseline:          {baseline_acc*100:.1f}% (always predict class {majority_class})")
+print(f"Improvement over baseline:        +{(accuracy - baseline_acc)*100:.1f} percentage points")
+
+# Show centroids
+cent_df = pd.DataFrame([
+    {"Class": c, "Species": CLASS_NAMES[c],
+     "w*": f"{centroids[c][0]:.4f}",
+     "Peak Power": f"{centroids[c][1]:.4f}",
+     "Spectral Conc.": f"{centroids[c][2]:.4f}",
+     "Mean ACF": f"{centroids[c][3]:.4f}"}
+    for c in classes
+])
+cent_df
+```
+
+## Reflection
+
+The nearest-centroid classifier using only 4 spectral features provides some discriminative power beyond the majority-class baseline. However, the UCR archive reports benchmark accuracies around 59–97% for OSULeaf depending on the classifier (e.g., 1-NN DTW achieves ~59%, while deep learning approaches reach ~97%). The gap suggests that our 4 coarse features miss important shape-level information such as local morphological details, shapelets, and multi-scale temporal patterns that more sophisticated classifiers can capture. The leaf boundary shape contains rich structural information beyond what simple spectral summaries and short-lag ACF can encode.
+
+---
+
+# Part 6 — Decision Log (required, 300–400 words) {#sec-log}
+
+**1. Two Key Decisions**
+
+First, I chose linear interpolation as my primary imputation strategy for downstream analysis. After comparing all three strategies on the OSULeaf representative series, linear interpolation consistently produced the smallest RMSE deviation from the original ACF across all six classes. This makes physical sense for leaf boundary data: the outlines are inherently smooth curves, so linearly interpolating between observed boundary points preserves the continuity of the contour far better than inserting a flat constant (mean fill) or averaging a local neighborhood (moving-average). Mean fill introduced visible distortions at all ACF lags, while moving-average fill slightly over-smoothed the boundary transitions.
+
+Second, I used the class-average periodogram rather than individual periodograms for identifying dominant frequencies. Individual periodograms from the OSULeaf dataset showed high variance due to the moderate series length (L=427) and the natural variability in leaf shapes within each species. Averaging over 5 periodograms per class dramatically reduced this variance and revealed more consistent spectral signatures, making the dominant frequency identification more reliable and reproducible.
+
+**2. One Surprising Finding**
+
+I was surprised to find that the dominant frequency remained stable for most series even under high noise ($\alpha=0.5$), while I expected noise to disrupt the spectral structure more severely for leaf outlines given their relatively weak periodic patterns compared to signals like ECG or power demand. This reveals that the OSULeaf leaf boundaries, despite appearing complex, have sufficiently strong low-frequency components from the overall leaf shape that persist even under moderate perturbation.
+
+**3. One Limitation**
+
+The four features extracted in Part 5 are extremely coarse summaries of the spectral and temporal structure. With only dominant frequency, peak power, spectral concentration, and mean short-lag ACF, we discard the rich shape information encoded in the full time series. With more time, I would extract additional features such as wavelet coefficients at multiple scales, shapelet-based features that capture class-specific subsequences, and higher-order spectral features like the bispectrum to capture nonlinear dependencies in the leaf contours.
+
+**4. One Open Question**
+
+My analysis raised the question of whether the spectral differences between Acer and Quercus genera are more pronounced than the differences within each genus. The periodogram analysis suggested some inter-genus spectral separation, but the within-genus classes (e.g., the four Acer species) showed overlapping spectral profiles. Understanding whether a hierarchical classification approach — first genus, then species — would improve accuracy remains an interesting open question that this homework did not address.
+
+---
+
+*IE 48B — Special Topics in Time Series Analytics, Spring 2026*
+*Mustafa Gokce Baydogan*
