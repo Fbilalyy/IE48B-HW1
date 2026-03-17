@@ -431,15 +431,17 @@ for i, c in enumerate(classes):
     original_acf = compute_acf(X_train[rep_idx], h_max)
     lags = np.arange(h_max + 1)
 
-    ax.plot(lags, original_acf, "k-", linewidth=2, label="Original", zorder=5)
+    ax.plot(lags, original_acf, "k-", linewidth=1.5, label="Original", zorder=1)
     ax.axhline(y=conf_band, color="gray", linestyle="--", linewidth=0.5)
     ax.axhline(y=-conf_band, color="gray", linestyle="--", linewidth=0.5)
 
+    linestyles_imp = ["-", "--", "-."]
     best_strategy = ""
     best_rmse = np.inf
     for j, (sname, sdata) in enumerate(imputed_data.items()):
         imp_acf = compute_acf(sdata[rep_idx], h_max)
-        ax.plot(lags, imp_acf, color=colors_imp[j], linewidth=1.2, alpha=0.8, label=sname)
+        ax.plot(lags, imp_acf, color=colors_imp[j], linewidth=2.0, alpha=0.9,
+                linestyle=linestyles_imp[j], label=sname, zorder=2 + j)
         rmse = np.sqrt(np.mean((original_acf - imp_acf)**2))
         if rmse < best_rmse:
             best_rmse = rmse
@@ -753,33 +755,40 @@ At low noise ($\alpha=0.2$), most series retained their original dominant freque
 # Compute SNR in dB for box plot
 snr_data = []
 for r in noise_results:
-    snr_data.append({"Noise Level": "Original", "SNR (dB)": 10 * np.log10(r["SNR (orig)"]) if r["SNR (orig)"] > 0 else 0, "Class": r["Class"]})
-    snr_data.append({"Noise Level": "Low (a=0.2)", "SNR (dB)": 10 * np.log10(r["SNR (low)"]) if r["SNR (low)"] > 0 else 0, "Class": r["Class"]})
-    snr_data.append({"Noise Level": "High (a=0.5)", "SNR (dB)": 10 * np.log10(r["SNR (high)"]) if r["SNR (high)"] > 0 else 0, "Class": r["Class"]})
+    snr_data.append({"Noise Level": "Original", "SNR_dB": 10*np.log10(r["SNR (orig)"]) if r["SNR (orig)"] > 0 else 0, "Class": r["Class"]})
+    snr_data.append({"Noise Level": "Low (a=0.2)", "SNR_dB": 10*np.log10(r["SNR (low)"]) if r["SNR (low)"] > 0 else 0, "Class": r["Class"]})
+    snr_data.append({"Noise Level": "High (a=0.5)", "SNR_dB": 10*np.log10(r["SNR (high)"]) if r["SNR (high)"] > 0 else 0, "Class": r["Class"]})
 
 snr_df = pd.DataFrame(snr_data)
 
+# Fisher's g-test threshold: under white noise, peak/median > ln(N/alpha)/ln(2)
+N_freq = L // 2
+fisher_threshold_linear = np.log(N_freq / 0.05) / np.log(2)
+fisher_threshold_dB = 10 * np.log10(fisher_threshold_linear)
+
 fig, ax = plt.subplots(figsize=(8, 5))
 levels = ["Original", "Low (a=0.2)", "High (a=0.5)"]
-box_data = [snr_df[snr_df["Noise Level"] == lvl]["SNR (dB)"].values for lvl in levels]
+box_data = [snr_df[snr_df["Noise Level"] == lvl]["SNR_dB"].values for lvl in levels]
 
 bp = ax.boxplot(box_data, labels=levels, patch_artist=True,
                 boxprops=dict(facecolor="lightblue", color="navy"),
                 medianprops=dict(color="red", linewidth=2))
-ax.axhline(y=3, color="red", linestyle="--", linewidth=1.5, label="SNR = 3 dB threshold")
+ax.axhline(y=fisher_threshold_dB, color="red", linestyle="--", linewidth=1.5,
+           label=f"Fisher threshold ({fisher_threshold_dB:.1f} dB)")
 ax.set_xlabel("Noise Level")
-ax.set_ylabel("SNR (dB)")
-ax.set_title("Peak SNR Distribution across 10 Series by Noise Level")
+ax.set_ylabel("Peak-to-Median Ratio (dB)")
+ax.set_title("Spectral Peak Detectability across Noise Levels")
 ax.legend()
 ax.grid(axis="y", alpha=0.3)
 plt.tight_layout()
 plt.show()
 
-# Count undetectable
 for lvl_name, key in [("Original", "SNR (orig)"), ("Low noise", "SNR (low)"), ("High noise", "SNR (high)")]:
-    snr_db_vals = [10 * np.log10(r[key]) if r[key] > 0 else 0 for r in noise_results]
-    n_below = sum(1 for v in snr_db_vals if v <= 3)
-    print(f"{lvl_name}: {n_below}/10 series have SNR <= 3 dB (undetectable)")
+    vals = [r[key] for r in noise_results]
+    vals_dB = [10*np.log10(v) if v > 0 else 0 for v in vals]
+    n_below = sum(1 for v in vals if v <= fisher_threshold_linear)
+    print(f"{lvl_name}: {n_below}/10 series below Fisher threshold")
+    print(f"  median = {np.median(vals_dB):.1f} dB, min = {min(vals_dB):.1f} dB, max = {max(vals_dB):.1f} dB")
 ```
 
 ```{python}
@@ -813,7 +822,7 @@ plt.show()
 
 ## Implication for analysis
 
-This robustness experiment reveals that spectral features for the OSULeaf dataset are moderately robust to noise. At low noise levels ($\alpha=0.2$, equivalent to 20% of signal standard deviation), the dominant frequency remains identifiable for most series. At higher noise ($\alpha=0.5$), some spectral peaks are buried under noise, particularly for classes with weaker periodic structure. Frequency-domain analysis would fail as a discriminator when the signal-to-noise ratio drops below approximately 3 dB, or when different classes share similar dominant frequencies, as the noise floor would mask the subtle spectral differences between classes.
+This robustness experiment reveals that spectral features for the OSULeaf dataset are quite robust to noise. At low noise levels ($\alpha=0.2$), the dominant frequency remains identifiable for all series, and even at $\alpha=0.5$ most series retain a detectable peak above the Fisher significance threshold. The leaf boundary outlines carry strong low-frequency structure (the overall leaf shape) that persists under moderate perturbation. Frequency-domain analysis would become unreliable only at noise levels high enough to push the peak-to-median ratio below the statistical detection threshold, or when different classes share nearly identical dominant frequencies.
 
 ---
 
@@ -923,21 +932,21 @@ The nearest-centroid classifier using only 4 spectral features provides some dis
 
 **1. Two Key Decisions**
 
-First, I chose linear interpolation as my primary imputation strategy for downstream analysis. After comparing all three strategies on the OSULeaf representative series, linear interpolation consistently produced the smallest RMSE deviation from the original ACF across all six classes. This makes physical sense for leaf boundary data: the outlines are inherently smooth curves, so linearly interpolating between observed boundary points preserves the continuity of the contour far better than inserting a flat constant (mean fill) or averaging a local neighborhood (moving-average). Mean fill introduced visible distortions at all ACF lags, while moving-average fill slightly over-smoothed the boundary transitions.
+I went with linear interpolation for imputation. When I looked at the ACF plots after applying all three methods, the linear one tracked the original curve the closest across all six classes. It makes sense — these are leaf outlines, basically smooth closed curves traced along the boundary, so connecting the gaps with straight lines keeps the shape intact. Mean fill was clearly off, it just jams a constant in there and you can see it messing up the ACF everywhere. Moving-average was okay but not as clean.
 
-Second, I used the class-average periodogram rather than individual periodograms for identifying dominant frequencies. Individual periodograms from the OSULeaf dataset showed high variance due to the moderate series length (L=427) and the natural variability in leaf shapes within each species. Averaging over 5 periodograms per class dramatically reduced this variance and revealed more consistent spectral signatures, making the dominant frequency identification more reliable and reproducible.
+For picking dominant frequencies, I averaged the periodograms over 5 series per class instead of just looking at individual ones. Single periodograms were all over the place — too noisy to draw any conclusion. Once I averaged them the peaks became much clearer and I could actually tell which frequencies matter for each class.
 
 **2. One Surprising Finding**
 
-I was surprised to find that the dominant frequency remained stable for most series even under high noise ($\alpha=0.5$), while I expected noise to disrupt the spectral structure more severely for leaf outlines given their relatively weak periodic patterns compared to signals like ECG or power demand. This reveals that the OSULeaf leaf boundaries, despite appearing complex, have sufficiently strong low-frequency components from the overall leaf shape that persist even under moderate perturbation.
+What surprised me was how the data is actually collected. The OSULeaf series are not measurements over time — they are boundary outlines of leaves, traced as a closed contour and then sampled at 427 evenly spaced points around the perimeter. So the "time axis" is really a spatial coordinate along the leaf edge. Once I realized this, a lot of things clicked: why interpolation works so well (because the boundary is physically continuous), why the ACF decays smoothly (because neighboring points on a leaf edge are similar), and why the low-frequency components dominate (they capture the overall leaf shape — round vs. elongated vs. lobed). I did not expect a "time series" dataset to actually be a spatial outline, and it changed how I interpreted every result.
 
 **3. One Limitation**
 
-The four features extracted in Part 5 are extremely coarse summaries of the spectral and temporal structure. With only dominant frequency, peak power, spectral concentration, and mean short-lag ACF, we discard the rich shape information encoded in the full time series. With more time, I would extract additional features such as wavelet coefficients at multiple scales, shapelet-based features that capture class-specific subsequences, and higher-order spectral features like the bispectrum to capture nonlinear dependencies in the leaf contours.
+Four features is not enough. Dominant frequency, peak power, spectral concentration, and mean ACF are way too coarse for this kind of data. They basically summarize the overall shape but throw away all the local detail — like whether a leaf has small serrations, how deep the lobes are, or how symmetric it is. If I had more time I would try extracting shape descriptors at multiple scales, maybe wavelet coefficients or shapelet features that can pick up on those local patterns.
 
 **4. One Open Question**
 
-My analysis raised the question of whether the spectral differences between Acer and Quercus genera are more pronounced than the differences within each genus. The periodogram analysis suggested some inter-genus spectral separation, but the within-genus classes (e.g., the four Acer species) showed overlapping spectral profiles. Understanding whether a hierarchical classification approach — first genus, then species — would improve accuracy remains an interesting open question that this homework did not address.
+I noticed that Acer species and Quercus species seem to separate in the frequency domain to some extent, but within each genus the classes overlap a lot. This made me wonder: would it help to first classify genus (Acer vs. Quercus) and then do a finer species-level classification within each group? Sort of a two-stage approach. I did not have time to try it but it seems like it could work better than trying to separate all six classes at once.
 
 ---
 
